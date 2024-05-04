@@ -1,8 +1,8 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
   title: 'tanmayshishodia',
-  author: 'Tanmay Shishodia',
-  headerTitle: 'Tanmay Shishodia',
+  author: 'tanmay shishodia',
+  headerTitle: 'tanmay shishodia',
   description: 'Personal Website',
   language: 'en-us',
   theme: 'system', // system, dark or light
