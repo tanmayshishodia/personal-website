@@ -10,6 +10,7 @@ import Link from '@/components/Link'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
 import tagData from 'app/tag-data.json'
+import Image from '@/components/Image'
 
 interface PaginationProps {
   totalPages: number
@@ -79,12 +80,29 @@ export default function ListLayoutWithTags({
     <>
       <div>
         <div className="pb-6 pt-6">
-          <h1 className="text-3xl font-extrabold leading-9 tracking-tight text-gray-900 dark:text-gray-100 sm:hidden sm:text-4xl sm:leading-10 md:text-6xl md:leading-14">
-            {title}
+          <h1 className="text-3xl font-extrabold leading-9 tracking-tight text-gray-900 dark:text-gray-100 sm:text-4xl sm:leading-10 md:text-6xl md:leading-14">
+            posts
           </h1>
         </div>
+        <div className="flex max-w-full flex-wrap">
+          {tagKeys.length === 0 && 'No tags found.'}
+          {sortedTags.map((t) => {
+            return (
+              <div key={t} className="mb-2 mr-5 mt-2">
+                <Tag text={t} />
+                <Link
+                  href={`/tags/${slug(t)}`}
+                  className="-ml-2 text-sm font-semibold lowercase text-gray-600 dark:text-gray-300"
+                  aria-label={`View posts tagged ${t}`}
+                >
+                  {` (${tagCounts[t]})`}
+                </Link>
+              </div>
+            )
+          })}
+        </div>
         <div className="flex sm:space-x-24">
-          <div className="hidden h-full max-h-screen min-w-[280px] max-w-[280px] flex-wrap overflow-auto rounded bg-gray-50 pt-5 shadow-md dark:bg-gray-900/70 dark:shadow-gray-800/40 sm:flex">
+          {/* <div className="hidden h-full max-h-screen min-w-[280px] max-w-[280px] flex-wrap overflow-auto rounded bg-gray-50 pt-5 shadow-md dark:bg-gray-900/70 dark:shadow-gray-800/40 sm:flex">
             <div className="px-6 py-4">
               {pathname.startsWith('/blog') ? (
                 <h3 className="font-bold lowercase text-primary-500">tags</h3>
@@ -118,33 +136,48 @@ export default function ListLayoutWithTags({
                 })}
               </ul>
             </div>
-          </div>
+          </div> */}
           <div>
             <ul>
               {displayPosts.map((post) => {
-                const { path, date, title, summary, tags } = post
+                const { path, date, title, summary, images, tags } = post
                 return (
                   <li key={path} className="py-5">
-                    <article className="flex flex-col space-y-2 xl:space-y-0">
-                      <dl>
-                        <dt className="sr-only">Published on</dt>
-                        <dd className="text-base font-medium leading-6 text-gray-500 dark:text-gray-400">
-                          <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
-                        </dd>
-                      </dl>
-                      <div className="space-y-3">
-                        <div>
-                          <h2 className="text-2xl font-bold leading-8 tracking-tight">
-                            <Link href={`/${path}`} className="text-gray-900 dark:text-gray-100">
-                              {title}
-                            </Link>
-                          </h2>
-                          <div className="flex flex-wrap">
-                            {tags?.map((tag) => <Tag key={tag} text={tag} />)}
+                    <article className="flex space-y-2 xl:space-y-0">
+                      <div className="space-y-2 xl:flex">
+                        <dl>
+                          <dt className="sr-only">Published on</dt>
+                          <dd className="text-base font-medium leading-6 text-gray-500 dark:text-gray-400 max-md:hidden">
+                            <div className="py-4 pr-3 ">
+                              <div className="h-24 w-24 ">
+                                <Image
+                                  alt={title}
+                                  src={images ? images[0] : ''}
+                                  className="h-full w-full rounded object-cover"
+                                  width={500}
+                                  height={500}
+                                />
+                              </div>
+                            </div>
+                          </dd>
+                        </dl>
+                        <div className="flex flex-col">
+                          <div>
+                            <h2 className="text-2xl font-bold leading-8 tracking-tight">
+                              <Link href={`/${path}`} className="text-gray-900 dark:text-gray-100">
+                                {title}
+                              </Link>
+                            </h2>
+                            <div className="flex flex-wrap">
+                              {tags?.map((tag) => <Tag key={tag} text={tag} />)}
+                            </div>
                           </div>
-                        </div>
-                        <div className="prose max-w-none text-gray-500 dark:text-gray-400">
-                          {summary}
+                          <div className="prose max-w-none text-gray-500 dark:text-gray-400">
+                            {summary}
+                          </div>
+                          <dd className="text-base text-sm font-medium lowercase leading-6 text-gray-500 dark:text-gray-400">
+                            <time dateTime={date}>{formatDate(date, siteMetadata.locale)}</time>
+                          </dd>
                         </div>
                       </div>
                     </article>
