@@ -11,14 +11,14 @@ const siteMetadata = {
   siteLogo: '/static/images/logo.png',
   socialBanner: '/static/images/twitter-card.png',
   mastodon: 'https://mastodon.social/@mastodonuser',
-  email: 'address@yoursite.com',
-  github: 'https://github.com',
+  email: 'tanmayshishodia@gmail.com',
+  github: 'https://github.com/tanmayshishodia',
   twitter: 'https://twitter.com/tanmayshishodia',
   facebook: 'https://facebook.com',
   youtube: 'https://youtube.com',
   linkedin: 'https://www.linkedin.com/in/tanmayshishodia/',
   threads: 'https://www.threads.net',
-  instagram: 'https://www.instagram.com',
+  instagram: 'https://www.instagram.com/tanmayshishodia/',
   locale: 'en-US',
   analytics: {
     // If you want to use an analytics provider you have to add it to the
