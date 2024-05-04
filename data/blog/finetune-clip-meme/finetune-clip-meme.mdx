@@ -1,0 +1,488 @@
+---
+title: finetune CLIP for text-generation
+date: '2024-03-08'
+lastmod: '2021-02-01'
+tags: ['CLIP', 'finetune', 'llm', 'vlm']
+draft: false
+summary: finetuning CLIP to generate captions given a picture of a meme
+authors: ['default']
+images: ['/static/images/finetune-clip-meme/fine-tune-clip-cover.png']
+---
+
+# installing CLIP
+
+```python
+!pip install git+https://github.com/openai/CLIP.git
+```
+
+```python
+from PIL import Image
+import torch
+from torch import nn, optim
+import glob
+import os
+import pandas as pd
+import json
+import numpy as np
+import clip
+from torch.utils.data import Dataset, DataLoader, BatchSampler
+from sklearn.model_selection import train_test_split
+from tqdm.notebook import tqdm
+import random
+from matplotlib.pyplot import imshow
+import torchtext
+import nltk, re, string, collections
+from nltk.util import ngrams
+import collections
+%matplotlib inline
+BATCH_SIZE = 128
+EPOCH = 5
+```
+
+# Preparing Model and Data
+
+Download the dataset and json from https://www.kaggle.com/datasets/zacchaeus/meme-project-raw and https://www.kaggle.com/datasets/zacchaeus/meme-project-clean-json and unzip the files in a folder called `input`.
+
+```python
+IMG_ROOT = "./input/meme-project-raw"
+JSON_ROOT = "./input/meme-project-clean-json"
+img_paths = glob.glob(os.path.join(IMG_ROOT, "*.jpg"))
+d = {}
+for i, img_path in enumerate(img_paths):
+    name = img_path.split("/")[-1].split(".")[0]
+    with open(os.path.join(JSON_ROOT, name+".json"), "r") as f:
+        captions = json.load(f)
+        temp = []
+        for cap in captions:
+            if "http" not in (cap[0]+ ' '+cap[1]) and len(cap[0]+ ' '+cap[1]) >= 8 and len(cap[0]+ ' '+cap[1]) <= 72:
+                temp.append(cap[0]+ ' '+cap[1])
+        d[img_path] = temp
+len(d)
+```
+
+## Splitting 20% for Validation
+
+```python
+train_img_paths, test_img_paths = train_test_split(img_paths, test_size=0.2, random_state=42)
+d_train = {k: d[k] for k in train_img_paths}
+d_test = {k: d[k] for k in test_img_paths}
+print(len(d_train), len(d_test))
+```
+
+## Loading Pre-trained CLIP Model and Preprocessor
+
+```python
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
+
+image = preprocess(Image.open("./input/meme-project-raw/-okay-.jpg")).unsqueeze(0).to(device)
+text = clip.tokenize(["a diagram", "a dog", "a cat"]).to(device)
+image.shape, text.shape
+```
+
+## MemeDataset
+
+```python
+class MemeDataset(Dataset):
+    def __init__(self, data, preprocess):
+        self.preprocess = preprocess
+        self.img_paths = []
+        self.captions = []
+        for img_path, captions in data.items():
+            for cap in captions:
+                self.img_paths.append(img_path)
+                self.captions.append(cap)
+        self.processed_cache = {}
+        for img_path in data:
+            self.processed_cache[img_path] = self.preprocess(Image.open(img_path))
+        self.img_paths_set = list(data.keys())
+        self.path2label = {path: self.img_paths_set.index(path) for path in self.img_paths_set}
+
+    def __len__(self):
+        return len(self.captions)
+
+    def __getitem__(self, idx):
+        img_path = self.img_paths[idx]
+        image = self.processed_cache[img_path]
+        caption = self.captions[idx]
+        label = self.path2label[img_path]
+        return image, caption, label
+
+train_dataset = MemeDataset(d_train, preprocess)
+test_dataset = MemeDataset(d_test, preprocess)
+len(train_dataset), len(test_dataset), train_dataset[0]
+```
+
+    (239062,
+     59675,
+     (tensor([[[-1.3105, -0.1718,  0.9084,  ...,  1.2296,  1.1566,  0.9960],
+               [-1.2813, -0.1864,  0.8501,  ...,  1.2442,  1.2004,  1.0690],
+               [-1.2959, -0.2594,  0.7917,  ...,  1.1274,  1.0982,  1.0106],
+               ...,
+               [-1.0623,  0.0179,  1.0398,  ...,  0.7771,  1.1712,  0.9084],
+               [-1.0477,  0.0471,  1.0544,  ..., -0.4200,  0.8938,  0.9522],
+               [-1.0477,  0.0179,  1.0252,  ..., -1.0185, -0.0405,  0.7625]],
+
+              [[ 0.8593,  1.1894,  1.3845,  ...,  1.3695,  1.3845,  1.3095],
+               [ 0.8893,  1.1744,  1.3095,  ...,  1.3845,  1.4145,  1.3845],
+               [ 0.8743,  1.0994,  1.2495,  ...,  1.2645,  1.3245,  1.3095],
+               ...,
+               [-0.7016,  0.2589,  1.2044,  ...,  0.8893,  1.2945,  1.0243],
+               [-0.7016,  0.2890,  1.2044,  ..., -0.3414,  1.0093,  1.0694],
+               [-0.6865,  0.2740,  1.1744,  ..., -0.9567,  0.0488,  0.8743]],
+
+              [[ 1.7762,  1.8046,  1.6198,  ...,  1.4633,  1.5487,  1.5344],
+               [ 1.8046,  1.7762,  1.5629,  ...,  1.4776,  1.5771,  1.6055],
+               [ 1.7904,  1.7051,  1.5060,  ...,  1.3638,  1.4918,  1.5344],
+               ...,
+               [ 0.5248,  1.0652,  1.4776,  ...,  1.0225,  1.4776,  1.2927],
+               [ 0.5390,  1.0936,  1.5060,  ..., -0.1435,  1.2074,  1.3354],
+               [ 0.5390,  1.0794,  1.4918,  ..., -0.7123,  0.2973,  1.1505]]]),
+      'Was into wireless  before you had wires',
+      0))
+
+```python
+i = 0
+for k,v in train_dataset.path2label.items():
+    i+=1
+    print(k,v)
+    if i == 10:
+        break
+```
+
+    ./input/meme-project-raw/nikola-tesla.jpg 0
+    ./input/meme-project-raw/spidermanwhisper.jpg 1
+    ./input/meme-project-raw/larry-david.jpg 2
+    ./input/meme-project-raw/perverted-mordecai.jpg 3
+    ./input/meme-project-raw/sporting.jpg 4
+    ./input/meme-project-raw/tyler-durden-2.jpg 5
+    ./input/meme-project-raw/obvious-question-ferret.jpg 6
+    ./input/meme-project-raw/raging-metal-chick.jpg 7
+    ./input/meme-project-raw/angry-arnold.jpg 8
+    ./input/meme-project-raw/yaazz.jpg 9
+
+## BalancedBatchSampler (ensures no same class per batch)
+
+```python
+# https://github.com/pytorch/pytorch/blob/e5742494f6080c8e6f43c37689fc18a7c4b39dfd/torch/utils/data/dataloader.py#L145
+class BalancedBatchSampler(BatchSampler):
+    """
+    BatchSampler - from a MNIST-like dataset, samples n_classes and within these classes samples n_samples.
+    Returns batches of size n_classes * n_samples
+    """
+
+    def __init__(self, labels, n_classes, n_samples):
+        self.labels = labels
+        self.labels_set = list(set(self.labels.numpy()))
+        self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
+                                 for label in self.labels_set}
+        for l in self.labels_set:
+            np.random.shuffle(self.label_to_indices[l])
+        self.used_label_indices_count = {label: 0 for label in self.labels_set}
+        self.count = 0
+        self.n_classes = n_classes
+        self.n_samples = n_samples
+        self.n_dataset = len(self.labels)
+        self.batch_size = self.n_samples * self.n_classes
+
+    def __iter__(self):
+        self.count = 0
+        while self.count + self.batch_size < self.n_dataset:
+            classes = np.random.choice(self.labels_set, self.n_classes, replace=False)
+            indices = []
+            for class_ in classes:
+                indices.extend(self.label_to_indices[class_][
+                               self.used_label_indices_count[class_]:self.used_label_indices_count[
+                                                                         class_] + self.n_samples])
+                self.used_label_indices_count[class_] += self.n_samples
+                if self.used_label_indices_count[class_] + self.n_samples > len(self.label_to_indices[class_]):
+                    np.random.shuffle(self.label_to_indices[class_])
+                    self.used_label_indices_count[class_] = 0
+            yield indices
+            self.count += self.n_classes * self.n_samples
+
+    def __len__(self):
+        return self.n_dataset // self.batch_size
+
+train_labels = torch.tensor([item[2] for item in train_dataset])
+train_sampler = BalancedBatchSampler(train_labels, BATCH_SIZE, 1)
+train_dataloader = DataLoader(train_dataset, batch_sampler=train_sampler)
+
+test_labels = torch.tensor([item[2] for item in test_dataset])
+test_sampler = BalancedBatchSampler(test_labels, BATCH_SIZE, 1)
+test_dataloader = DataLoader(test_dataset, batch_sampler=test_sampler)
+```
+
+```python
+for i, item in enumerate(train_sampler):
+    labels = []
+    for idx in item:
+        label = train_dataset[idx][2]
+        labels.append(label)
+    break
+len(labels), len(set(labels))
+```
+
+```python
+for batch in train_dataloader:
+    imgs, txts, labels = batch
+    print(imgs.shape)
+    print(len(txts))
+    print(labels)
+    print(labels.shape)
+    print(torch.unique(labels).shape)
+    break
+```
+
+    torch.Size([128, 3, 224, 224])
+    128
+    tensor([2054, 1235, 1097, 1604, 1351,  223,  503,  518,  949, 1127,  655,  552,
+             381, 1484,  975,  126, 2020, 1833,  280,   93, 1372, 1382,  923,  370,
+            1238, 1897,  865,   50, 2337,  665, 1715,  502, 2188,  433,  716, 2330,
+            1975,  272,  992,  673, 1194, 1703,  490,  925, 1789, 1706,  356,  683,
+            1040, 1966,  987, 1471, 2145, 1303, 1116, 2081,  703,  316,  487,  674,
+             108,  746,  276, 2381,  822,  953, 1028,  326, 2069,  960, 1876,  544,
+             751,   44,  944, 2173,  543,  966, 2230,  824, 1594, 2225, 1329,  823,
+             774, 2256,  186,  302, 1236,  184,   78,  377,  985,  815, 1592, 1123,
+            1090,  745,  249,  618, 1936,   92, 1655,  446, 2325,  148,  157, 1668,
+            1667, 1205,  432, 1322, 2186, 1924,  238, 2122, 1422, 1689,   66, 2052,
+             779,  325,  664, 1980, 2356,  177, 1373, 1141])
+    torch.Size([128])
+    torch.Size([128])
+
+# Training
+
+```python
+#https://github.com/openai/CLIP/issues/57
+def convert_models_to_fp32(model):
+    for p in model.parameters():
+        p.data = p.data.float()
+        p.grad.data = p.grad.data.float()
+
+if device == "cpu":
+    model.float()
+
+loss_img = nn.CrossEntropyLoss()
+loss_txt = nn.CrossEntropyLoss()
+
+optimizer = optim.Adam(model.parameters(), lr=1e-5)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_dataloader)*EPOCH)
+```
+
+```python
+best_te_loss = 1e5
+best_ep = -1
+for epoch in range(EPOCH):
+    print(f"running epoch {epoch}, best test loss {best_te_loss} after epoch {best_ep}")
+    step = 0
+    tr_loss = 0
+    model.train()
+    pbar = tqdm(train_dataloader, leave=False)
+    for batch in pbar:
+        step += 1
+        optimizer.zero_grad()
+
+        images, texts, _ = batch
+        images = images.to(device)
+        texts = clip.tokenize(texts).to(device)
+
+        logits_per_image, logits_per_text = model(images, texts)
+        ground_truth = torch.arange(BATCH_SIZE).to(device)
+
+        total_loss = (loss_img(logits_per_image,ground_truth) + loss_txt(logits_per_text,ground_truth))/2
+        total_loss.backward()
+        tr_loss += total_loss.item()
+        if device == "cpu":
+            optimizer.step()
+            scheduler.step()
+        else:
+            convert_models_to_fp32(model)
+            optimizer.step()
+            scheduler.step()
+            clip.model.convert_weights(model)
+        pbar.set_description(f"train batchCE: {total_loss.item()}", refresh=True)
+    tr_loss /= step
+
+    step = 0
+    te_loss = 0
+    with torch.no_grad():
+        model.eval()
+        test_pbar = tqdm(test_dataloader, leave=False)
+        for batch in test_pbar:
+            step += 1
+            images, texts, _ = batch
+            images = images.to(device)
+            texts = clip.tokenize(texts).to(device)
+            logits_per_image, logits_per_text = model(images, texts)
+            ground_truth = torch.arange(BATCH_SIZE).to(device)
+
+            total_loss = (loss_img(logits_per_image,ground_truth) + loss_txt(logits_per_text,ground_truth))/2
+            te_loss += total_loss.item()
+            test_pbar.set_description(f"test batchCE: {total_loss.item()}", refresh=True)
+        te_loss /= step
+
+    if te_loss < best_te_loss:
+        best_te_loss = te_loss
+        best_ep = epoch
+        torch.save(model.state_dict(), "best_model.pt")
+    print(f"epoch {epoch}, tr_loss {tr_loss}, te_loss {te_loss}")
+torch.save(model.state_dict(), "last_model.pt")
+```
+
+# Evaluating Precision on Validation Set
+
+```python
+model.load_state_dict(torch.load("best_model.pt"))
+NUM_NEG = 127
+NUM_TEST = 1000
+```
+
+```python
+n_correct = 0
+for i in tqdm(range(NUM_TEST)):
+    empty = True
+    while empty:
+        img_path = random.choice(list(d_test.keys()))
+        image = preprocess(Image.open(img_path)).unsqueeze(0).to(device)
+        name = img_path.split('/')[-1].split('.')[0]
+        caps = d_test[img_path]
+        if len(caps) > 0:
+            pos_txt = random.choice(caps)
+            empty = False
+
+    neg_i = 0
+    neg_txts = []
+    while neg_i < NUM_NEG:
+        img_path = random.choice(list(d_test.keys()))
+        neg_name = img_path.split('/')[-1].split('.')[0]
+        if neg_name == name:
+            continue
+        caps = d_test[img_path]
+        if len(caps) == 0:
+            continue
+        neg_txt = random.choice(caps)
+        if neg_txt in neg_txts:
+            continue
+        neg_txts.append(neg_txt)
+        neg_i += 1
+
+    text = clip.tokenize([pos_txt]+neg_txts).to(device)
+
+    with torch.no_grad():
+        image_features = model.encode_image(image)
+        text_features = model.encode_text(text)
+
+        logits_per_image, logits_per_text = model(image, text)
+        probs = logits_per_image.softmax(dim=-1).cpu().numpy()
+
+    if np.argmax(probs) == 0:
+        n_correct +=1
+print(f"Test precision {n_correct/NUM_TEST}")
+```
+
+# Evaluating BLEU and Word Diversity using Naive Sampling
+
+## Sampling Captions for Validation Images According to CLIP Text-Image Proximity
+
+```python
+def sample1Caption(img_path, corpus, model, num_cand):
+    image = preprocess(Image.open(img_path)).unsqueeze(0).to(device)
+    i = 0
+    txts = []
+    while i < num_cand:
+        txt = random.choice(corpus)
+        if txt in txts:
+            continue
+        if len(txt.split())<5 or len(txt)>72:
+            continue
+        txts.append(txt)
+        i += 1
+
+    text = clip.tokenize(txts).to(device)
+
+    with torch.no_grad():
+        logits_per_image, logits_per_text = model(image, text)
+        probs = logits_per_image.softmax(dim=-1).cpu().numpy()
+
+    return txts[np.argmax(probs)]
+```
+
+```python
+model.load_state_dict(torch.load("best_model.pt"))
+corpus = []
+for txtlist in d_train.values():
+    corpus += txtlist
+len(corpus), corpus[0]
+```
+
+```python
+captions = {}
+for img_path in tqdm(d_test.keys()):
+    caption = sample1Caption(img_path, corpus, model, 1000)
+    captions[img_path] = caption
+```
+
+## BLEU Score
+
+```python
+import torchtext
+from torchtext.data.metrics import bleu_score
+for get_bleu in range(1,4):
+    bleu_x_lst = []
+    bleu_y_lst = []
+    for p, caps in d_test.items():
+        if not caps:
+            continue
+        bleu_x_lst.append(captions[p].split())
+        splittedcaps = [x.split() for x in caps]
+        bleu_y_lst.append(splittedcaps)
+    BLEU = torchtext.data.metrics.bleu_score(bleu_x_lst, bleu_y_lst, max_n=get_bleu, weights=[1/get_bleu]*get_bleu)
+    print(f"{get_bleu}-gram BLEU score: {BLEU}")
+```
+
+## Word Diversity
+
+```python
+sentences = list(captions.values())
+BigramCtr = collections.Counter()
+UnigramCtr = collections.Counter()
+for sentence in sentences:
+    BigramCtr.update(nltk.ngrams(sentence, 2))
+    UnigramCtr.update(nltk.ngrams(sentence, 1))
+
+print("Unigram count:",len(BigramCtr))
+print("Bigram count:",len(UnigramCtr))
+```
+
+    Unigram count: 1319
+    Bigram count: 83
+
+# Case Analysis on Seen and Unseen Images
+
+```python
+seen_path = random.choice(list(d_train.keys()))
+pred_cap_seen = sample1Caption(seen_path, corpus, model, 1000)
+gt_cap_seen = d_train[seen_path][:5]
+imshow(Image.open(seen_path))
+print(f"Some ground truth captions for this seen image: {gt_cap_seen}")
+print(f"Caption sampled by fintuned CLIP for this seen image: {pred_cap_seen}")
+```
+
+    Some ground truth captions for this seen image: ['Tony a never visits hangouts anymore Send attack goats', 'Get ahead on homework to study for midterm', 'compete for unpaid volunteer work', 'reads sdn forum statistics i am never getting into med school', 'study today HAMPTONs tomorrow']
+    Caption sampled by fintuned CLIP for this seen image: No new routes or belay classes all summer? not impressed.
+
+![seen-meme](/static/images/finetune-clip-meme/seen-meme.png)
+
+```python
+unseen_path = random.choice(list(d_test.keys()))
+pred_cap_unseen = sample1Caption(unseen_path, corpus, model, 1000)
+imshow(Image.open(unseen_path))
+gt_cap_unseen = d_test[unseen_path][:5]
+print(f"Some ground truth captions for this unseen image: {gt_cap_unseen}")
+print(f"Caption sampled by finetuned CLIP for this unseen image: {pred_cap_unseen}")
+```
+
+    Some ground truth captions for this unseen image: ['shift starts train stops', 'need to fix the rails drinks beer at the bar instead', 'I used to be a worker just like you but then i took an arrow in the knee', 'hallo, ik ben thierry thierry staakt', 'WEEKEND STAAKT NIET']
+    Caption sampled by finetuned CLIP for this unseen image: ComplainS immigrants can't drive in snow Spins Out in first froSt
+
+![unseen-meme](/static/images/finetune-clip-meme/unseen-meme.png)
