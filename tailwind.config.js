@@ -25,7 +25,7 @@ module.exports = {
         sans: ['var(--font-space-grotesk)', ...fontFamily.sans],
       },
       colors: {
-        primary: colors.emerald,
+        primary: colors.violet,
         gray: colors.gray,
       },
       typography: ({ theme }) => ({
@@ -68,4 +68,5 @@ module.exports = {
     },
   },
   plugins: [require('@tailwindcss/forms'), require('@tailwindcss/typography'), require('daisyui')],
+  daisyui: { themes: [] },
 }
