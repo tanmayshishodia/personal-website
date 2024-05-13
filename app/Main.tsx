@@ -93,4 +93,5 @@ export default function Home({ posts }) {
   //     </>
   //   )
   redirect('/about')
+  return <></>
 }
