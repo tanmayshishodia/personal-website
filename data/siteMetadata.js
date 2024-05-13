@@ -3,7 +3,7 @@ const siteMetadata = {
   title: 'tanmayshishodia',
   author: 'tanmay shishodia',
   headerTitle: 'tanmay shishodia',
-  description: 'Personal Website',
+  description: '',
   language: 'en-us',
   theme: 'system', // system, dark or light
   siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app',
