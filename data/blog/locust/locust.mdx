@@ -1,0 +1,189 @@
+---
+title: load testing API with locust
+date: '2024-05-19'
+lastmod: '2024-05-19'
+tags: ['api', 'load-testing', 'locust', 'python']
+draft: false
+summary: load testing and simulating user behavior with locust
+authors: ['default']
+images: ['/static/images/finetune-clip-meme/fine-tune-clip-cover.png']
+---
+
+## using locust for api load testing on a single machine
+
+### introduction
+
+load testing is a necessary aspect of software development, ensuring that applications can handle expected user loads without performance degradation.
+locust is an open-source load testing tool that allows developers to simulate user behavior and measure system performance under load.
+in this blog post we will go through the process of using locust for api load testing on a single machine as well as with multiple machines.
+locust can be run headless as well without a ui making it suitable for using remote servers.
+
+### prerequisites
+
+before we begin, ensure you have the following installed on your machine:
+
+- python 3.5 or higher
+- pip (python package installer)
+
+### create a simple rest api
+
+for this tutorial, we'll create a minimal restful api using the fastapi framework which we can then load test.
+this api will allow users to get a list of software testing types or add a new type.
+
+create a new directory for your project and navigate into it:
+
+```bash
+mkdir locust_test
+cd locust_test
+```
+
+create a virtual environment and activate it:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+install fastapi:
+
+```bash
+pip install fastapi
+```
+
+create a file named `main.py` and add the following code:
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+
+app = FastAPI()
+
+class TestingType(BaseModel):
+    type: str
+
+testing_types = ["unit test", "integration test", "system test", "acceptance test"]
+
+@app.get('/testing-types', response_model=List[str])
+async def get_testing_types():
+    return testing_types
+
+@app.post('/testing-types', status_code=201)
+async def add_testing_type(testing_type: TestingType):
+    if testing_type.type:
+        testing_types.append(testing_type.type)
+        return {"message": "type added"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid input")
+```
+
+run the fastapi application:
+
+```bash
+fastapi dev main.py
+```
+
+your api should now be running on `http://127.0.0.1:8000`.
+
+### install locust
+
+first, you need to install locust. open your terminal and run the following command:
+
+```bash
+pip3 install locust
+```
+
+### write locust test script
+
+create a file named `locust.py` in the same directory and add the following code:
+
+```python
+from locust import HttpUser, between, task
+
+
+class UserBehavior(HttpUser):
+    host = "http://127.0.0.1:8000"
+    wait_time = between(1, 2)
+    connection_timeout = 60
+    network_timeout = 60
+
+    @task
+    def get_testing_types(self):
+        self.client.get("/testing-types")
+
+    @task(2)
+    def add_testing_type(self):
+        self.client.post("/testing-types", json={"type": "performance test"})
+
+    def on_start(self):
+        pass
+
+    def on_stop(self):
+        pass
+```
+
+we inherit the class `HttpUser` and define the tasks locust will run for each user. locust’s default http client uses python-requests.
+that many python developers are familiar with, and is very well-maintained.
+but if you’re planning to run tests with very high throughput and have limited hardware for running locust, it is sometimes not efficient enough.
+because of this, locust also comes with [`FastHttpUser`](https://docs.locust.io/en/stable/increase-performance.html) which uses `geventhttpclient` instead. just subclass `FastHttpUser` instead of `HttpUser` to use it.
+it provides a very similar api and uses significantly less cpu time, sometimes increasing the maximum number of requests per second on a given hardware by as much as 5x-6x.
+
+in the above code, we can see the `@task` decorated the line of code.
+the task is the core of your locust file.
+for every running user, locust creates a greenlet (micro-thread), that will call those methods.
+in the task, we can set the weight of the task. the weight of the task is configuration will make locust many times likelier to pick,
+when you set it to 2 locust will be likelier to pick the task 2 times.
+
+- `host`: the host url we are testing.
+- `wait_time`: time to wait between each user's request. `between(x, y)` for randomly waiting between x and y. you can also import and use `constant(x)` to wait for x seconds between each request for a user.
+- `connection_timeout`: time locust waits for establishing a TCP connection with the server before giving up
+- `network_timeout`: maximum time locust will wait for a response from the server after the connection has been established
+
+you can also define certain functionalities to be run for each user before the start and after the test is run for each user using the `on_start` and `on_stop` methods.
+for example you can define user login steps in the `on_start` method.
+
+### run locust
+
+to start locust, run the following command in your terminal:
+
+```bash
+locust -f locust.py -u 1000 -r 100 -t 60s --process -1
+```
+
+- `u`: maximum number of concurrent users.
+- `r`: rate at which users are spawned per second.
+- `t`: duration for which the load test runs.
+- `processes`: take advantage of [distributed load generation](https://docs.locust.io/en/stable/running-distributed.html).
+  launches a master process and the specified number of worker processes. use -1 for it to automatically allocate based on your system.
+  you can refer docs for more control and alternatively use `master` and `worker` flags.
+
+open your browser and navigate to `http://127.0.0.1:8089`. click "start" to begin the test.
+
+### monitor and analyze results
+
+as the test runs, you can monitor the response times, throughput, and error rates in real-time through the locust web interface. once the test is complete, you can download a report in html format for further analysis.
+below is a screenshot of our run.
+
+![locust-chart](/static/images/locust/locust-chart.png)
+
+### conclusion
+
+using locust for api load testing on a single machine is straightforward and powerful. by following the steps outlined in this blog post, you can simulate user behavior, identify bottlenecks, and ensure your application can handle the expected load. happy testing!
+
+### references
+
+[1] [locust documentation](https://docs.locust.io) <br/>
+[2] https://www.geeksforgeeks.org/load-testing-using-locust/ <br/>
+[3] https://blog.theodo.com/2024/02/locust-load-test-tool-python/ <br/>
+[4] https://github.com/locustio/locust <br/>
+[5] https://learnosity.com/edtech-blog/how-we-manipulated-locust-to-test-system-performance-under-pressure/ <br/>
+[6] https://github.com/locustio/locust/issues/522 <br/>
+[7] https://docs.locust.io/en/2.0.0/running-locust-distributed.html <br/>
+[8] https://docs.locust.io/en/stable/running-distributed.html <br/>
+[9] https://locust.io <br/>
+[10] https://github.com/pglass/how-do-i-locust <br/>
+[11] https://stackoverflow.com/questions/63302036/how-to-run-locust-with-multiprocessing-on-a-single-machine <br/>
+[12] https://www.j-labs.pl/en/tech-blog/mastering-performance-testing-with-locust-a-practical-guide/ <br/>
+[13] https://intersog.com/blog/load-testing-via-locust-framework/ <br/>
+
+feel free to leave comments or questions below. happy load testing!
